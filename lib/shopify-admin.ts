@@ -326,7 +326,7 @@ export async function shopifyAdminFetch<T>(
   return result.data;
 }
 
-function getImageMedia(imageUrl?: string) {
+function getImageMedia(imageUrl?: string, altText?: string) {
   if (imageUrl === undefined) {
     return null;
   }
@@ -342,7 +342,92 @@ function getImageMedia(imageUrl?: string) {
     throw new Error("imageUrl must be a valid HTTP or HTTPS URL.");
   }
 
-  return [{ originalSource: imageUrl, mediaContentType: "IMAGE" }];
+  return [{ originalSource: imageUrl, mediaContentType: "IMAGE", alt: altText }];
+}
+
+export async function uploadGeneratedProductImage({
+  bytes,
+  mimeType,
+}: {
+  bytes: Uint8Array;
+  mimeType: string;
+}): Promise<string> {
+  const extensionByMimeType: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  };
+  const extension = extensionByMimeType[mimeType];
+  if (!extension) {
+    throw new Error(`Unsupported generated image type: ${mimeType}`);
+  }
+
+  const filename = `generated-product-${Date.now()}.${extension}`;
+  const data = await shopifyAdminFetch<{
+    stagedUploadsCreate: {
+      stagedTargets: Array<{
+        url: string;
+        resourceUrl: string;
+        parameters: Array<{ name: string; value: string }>;
+      }>;
+    };
+  }>(
+    `mutation StageGeneratedProductImage($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets {
+          url
+          resourceUrl
+          parameters {
+            name
+            value
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }`,
+    {
+      input: [
+        {
+          filename,
+          mimeType,
+          fileSize: String(bytes.byteLength),
+          httpMethod: "POST",
+          resource: "PRODUCT_IMAGE",
+        },
+      ],
+    },
+  );
+
+  const target = data.stagedUploadsCreate.stagedTargets[0];
+  if (!target) {
+    throw new Error("Shopify did not return a staged upload target.");
+  }
+
+  const formData = new FormData();
+  for (const parameter of target.parameters) {
+    formData.append(parameter.name, parameter.value);
+  }
+  formData.append(
+    "file",
+    new Blob([Buffer.from(bytes)], { type: mimeType }),
+    filename,
+  );
+
+  const uploadResponse = await fetch(target.url, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(
+      `Shopify image upload failed with HTTP ${uploadResponse.status}.`,
+    );
+  }
+
+  return target.resourceUrl;
 }
 
 async function publishProductToOnlineStore(productId: string): Promise<void> {
@@ -739,7 +824,6 @@ export async function createProduct({
   vendor,
   productType,
   price,
-  imageUrl,
   publishToOnlineStore,
   status,
 }: {
@@ -748,7 +832,6 @@ export async function createProduct({
   vendor?: string;
   productType?: string;
   price: string | number;
-  imageUrl?: string;
   publishToOnlineStore?: boolean;
   status?: ShopifyProductStatus;
 }): Promise<ShopifyProduct> {
@@ -758,15 +841,11 @@ export async function createProduct({
     );
   }
 
-  const media = getImageMedia(imageUrl);
   const data = await shopifyAdminFetch<{
     productCreate: { product: ShopifyProduct | null };
   }>(
-    `mutation CreateProduct(
-      $product: ProductCreateInput!
-      $media: [CreateMediaInput!]
-    ) {
-      productCreate(product: $product, media: $media) {
+    `mutation CreateProduct($product: ProductCreateInput!) {
+      productCreate(product: $product) {
         product {
           ${PRODUCT_FIELDS}
         }
@@ -784,7 +863,6 @@ export async function createProduct({
         productType,
         status: status ?? (publishToOnlineStore ? "ACTIVE" : "DRAFT"),
       },
-      media,
     },
   );
 
@@ -844,7 +922,6 @@ export async function updateProduct({
   status,
   price,
   variantId,
-  imageUrl,
   publishToOnlineStore,
 }: {
   id: string;
@@ -855,7 +932,6 @@ export async function updateProduct({
   status?: ShopifyProductStatus;
   price?: string | number;
   variantId?: string;
-  imageUrl?: string;
   publishToOnlineStore?: boolean;
 }): Promise<ShopifyProduct> {
   if ((price === undefined) !== (variantId === undefined)) {
@@ -868,7 +944,6 @@ export async function updateProduct({
     );
   }
 
-  const media = getImageMedia(imageUrl);
   const productInput: ShopifyProductInput & { id: string } = { id };
   if (title !== undefined) productInput.title = title;
   if (descriptionHtml !== undefined) {
@@ -883,11 +958,10 @@ export async function updateProduct({
   if (
     !hasProductFields &&
     price === undefined &&
-    imageUrl === undefined &&
     !publishToOnlineStore
   ) {
     throw new Error(
-      "Provide at least one product field, a variant price, an image, or publication.",
+      "Provide at least one product field, a variant price, or publication.",
     );
   }
 
@@ -944,34 +1018,6 @@ export async function updateProduct({
     product = data.productVariantsBulkUpdate.product ?? product;
   }
 
-  if (imageUrl !== undefined && media) {
-    const data = await shopifyAdminFetch<{
-      productCreateMedia: { product: ShopifyProduct | null };
-    }>(
-      `mutation AddProductImage(
-        $productId: ID!
-        $media: [CreateMediaInput!]!
-      ) {
-        productCreateMedia(productId: $productId, media: $media) {
-          product {
-            ${PRODUCT_FIELDS}
-          }
-          mediaUserErrors {
-            field
-            message
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }`,
-      { productId: id, media },
-    );
-
-    product = data.productCreateMedia.product ?? product;
-  }
-
   if (publishToOnlineStore) {
     await publishProductToOnlineStore(id);
   }
@@ -981,6 +1027,129 @@ export async function updateProduct({
   }
 
   return product;
+}
+
+export async function addProductImage({
+  id,
+  imageUrl,
+  altText,
+}: {
+  id: string;
+  imageUrl: string;
+  altText?: string;
+}): Promise<{
+  productId: string;
+  productTitle: string;
+  imageStatus: string;
+  imageUrl: string | null;
+}> {
+  const media = getImageMedia(imageUrl, altText);
+  if (!media) {
+    throw new Error("A product image URL is required.");
+  }
+
+  const data = await shopifyAdminFetch<{
+    productCreateMedia: {
+      product: Pick<ShopifyProduct, "id" | "title"> | null;
+      media: Array<{
+        status: string;
+        mediaContentType: string;
+        image?: { url: string } | null;
+      }>;
+    };
+  }>(
+    `mutation AddProductImage(
+      $productId: ID!
+      $media: [CreateMediaInput!]!
+    ) {
+      productCreateMedia(productId: $productId, media: $media) {
+        product {
+          id
+          title
+        }
+        media {
+          status
+          mediaContentType
+          ... on MediaImage {
+            image {
+              url
+            }
+          }
+        }
+        mediaUserErrors {
+          field
+          message
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }`,
+    { productId: id, media },
+  );
+
+  const { product, media: createdMedia } = data.productCreateMedia;
+  const image = createdMedia[0];
+  if (!product || !image) {
+    throw new Error("Shopify did not confirm the product image upload.");
+  }
+  if (image.status === "FAILED") {
+    throw new Error("Shopify failed to process the product image.");
+  }
+
+  return {
+    productId: product.id,
+    productTitle: product.title,
+    imageStatus: image.status,
+    imageUrl: image.image?.url ?? null,
+  };
+}
+
+export async function getProductImageContext(id: string): Promise<{
+  id: string;
+  title: string;
+  description: string;
+  vendor: string;
+  productType: string;
+  variants: {
+    nodes: Array<{ price: string }>;
+  };
+}> {
+  const data = await shopifyAdminFetch<{
+    product: {
+      id: string;
+      title: string;
+      description: string;
+      vendor: string;
+      productType: string;
+      variants: {
+        nodes: Array<{ price: string }>;
+      };
+    } | null;
+  }>(
+    `query ProductImageContext($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        description
+        vendor
+        productType
+        variants(first: 1) {
+          nodes {
+            price
+          }
+        }
+      }
+    }`,
+    { id },
+  );
+
+  if (!data.product) {
+    throw new Error("Shopify could not find the product for image generation.");
+  }
+
+  return data.product;
 }
 
 export async function updateInventory({

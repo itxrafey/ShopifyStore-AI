@@ -6,11 +6,14 @@ ShopifyStore AI is an AI-powered Shopify inventory and store-management copilot.
 
 The assistant uses Google Gemini through the Vercel AI SDK and Shopify's Admin GraphQL API. It can look up products before making changes, helping ensure product, variant, and inventory item IDs come from Shopify rather than being guessed. The dashboard's chat access and Shopify API routes are protected by an admin password.
 
+When a user explicitly requests a product image without supplying a URL, Gemini Nano Banana 2.1 generates an illustrative image from the product details and the app uploads it to Shopify. If generation or upload fails, other product changes continue and the assistant reports that no image was added.
+
 Chat sessions are saved in the browser's local storage. Shopify credentials and AI requests are handled by server-side routes; do not expose credentials in client-side code.
 
 ## Key Features
 
 - Chat with an AI assistant about products, stock, and recent orders.
+- Attach product images from a supplied URL or generate an illustrative image with Gemini when requested.
 - Search and browse the product catalog, including status, price, vendor, variants, and stock.
 - Create, edit, publish, and delete products.
 - Review inventory levels and set exact available quantities.
@@ -23,7 +26,7 @@ Chat sessions are saved in the browser's local storage. Shopify credentials and 
 - [Next.js](https://nextjs.org/) App Router and React
 - TypeScript
 - [Tailwind CSS](https://tailwindcss.com/)
-- [Vercel AI SDK](https://ai-sdk.dev/) with the Google provider and Gemini 3.5 Flash-Lite
+- [Vercel AI SDK](https://ai-sdk.dev/) with Gemini 3.5 Flash-Lite and Gemini Nano Banana 2.1 for image generation
 - [Shopify Admin GraphQL API](https://shopify.dev/docs/api/admin-graphql) (API version `2026-04`)
 - Zod for request and tool input validation
 - Framer Motion and Lucide React for interface animation and icons
@@ -79,7 +82,7 @@ Create `.env.local` from `.env.example` and supply the values for your own Googl
 
 | Variable | Description |
 | --- | --- |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | API key used by the Google provider for Gemini requests. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | API key used by the Google provider for Gemini chat and requested image generation. Image generation also requires access and available quota for the image model. |
 | `SHOPIFY_STORE_DOMAIN` | Your store's `*.myshopify.com` domain. |
 | `SHOPIFY_CLIENT_ID` | Client ID for the Shopify app using the client credentials grant. |
 | `SHOPIFY_CLIENT_SECRET` | Client secret for that Shopify app. The server exchanges it for an Admin API access token. |
