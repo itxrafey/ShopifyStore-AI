@@ -487,7 +487,7 @@ function ChatBubble({ message }: { message: UIMessage }) {
       <div className={isUser ? "max-w-[88%] sm:max-w-[80%]" : "min-w-0 flex-1"}>
         {!isUser ? (
           <p className="mb-1.5 text-[11px] font-semibold text-slate-600">
-            StorePilot AI
+            ShopifyStore AI
           </p>
         ) : null}
         <div
@@ -893,7 +893,7 @@ export default function ChatView({
                         <Sparkles size={14} />
                       </motion.span>
                     </span>
-                    StorePilot is thinking...
+                    ShopifyStore AI is thinking...
                   </div>
                 ) : null}
                 <div ref={messageEndRef} />
@@ -949,7 +949,7 @@ export default function ChatView({
                 onChange={handleDraftChange}
                 onKeyDown={handleComposerKeyDown}
                 placeholder="Ask your inventory assistant..."
-                aria-label="Message StorePilot AI"
+                aria-label="Message ShopifyStore AI"
                 rows={1}
                 className="max-h-40 min-h-12 w-full resize-none overflow-y-auto bg-transparent px-3 py-3 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-400"
               />
@@ -958,7 +958,7 @@ export default function ChatView({
                   <span className="hidden sm:inline">
                     Enter to send · Shift + Enter for a new line
                   </span>
-                  <span className="sm:hidden">StorePilot AI</span>
+                  <span className="sm:hidden">ShopifyStore AI</span>
                 </span>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="hidden items-center gap-1 text-[10px] text-slate-400 sm:inline-flex">

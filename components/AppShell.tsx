@@ -151,7 +151,7 @@ function SidebarContent({
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold tracking-tight text-slate-900">
-            StorePilot AI
+            ShopifyStore AI
           </p>
           <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">
             Merchant workspace
@@ -202,7 +202,7 @@ function SidebarContent({
               >
                 {selected ? (
                   <motion.span
-                    layoutId="storepilot-active-tab"
+                    layoutId="shopifystore-active-tab"
                     className="absolute inset-0 -z-10 rounded-xl bg-emerald-50"
                     transition={{
                       type: "spring",

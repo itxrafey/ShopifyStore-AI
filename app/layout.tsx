@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StorePilot Ai",
-  description: "StorePilot Ai — Merchant Workspace & Shopify Inventory Copilot",
+  title: "ShopifyStore AI",
+  description: "ShopifyStore AI — Merchant Workspace & Shopify Inventory Copilot",
 };
 
 export const viewport: Viewport = {
