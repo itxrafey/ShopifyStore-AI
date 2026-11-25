@@ -23,7 +23,7 @@ Chat sessions are saved in the browser's local storage. Shopify credentials and 
 - [Next.js](https://nextjs.org/) App Router and React
 - TypeScript
 - [Tailwind CSS](https://tailwindcss.com/)
-- [Vercel AI SDK](https://ai-sdk.dev/) with the Google provider and Gemini 2.5 Flash Lite
+- [Vercel AI SDK](https://ai-sdk.dev/) with the Google provider and Gemini 3.5 Flash-Lite
 - [Shopify Admin GraphQL API](https://shopify.dev/docs/api/admin-graphql) (API version `2026-04`)
 - Zod for request and tool input validation
 - Framer Motion and Lucide React for interface animation and icons

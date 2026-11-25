@@ -120,6 +120,53 @@ When the user asks for a complete product catalog, call listAllProducts. Use lis
 
 Present product results as clear bullet points or clean Markdown tables. Include title, price, stock, status, storefront visibility, and the exact product ID whenever available. Use the first variant's price, total product inventory for Stock, and the product GID for ID. For order summaries, include order name, date, financial status, fulfillment status, and total with its currency.`;
 
+function getChatErrorDetails(error: unknown) {
+  const details: {
+    name: string;
+    statusCode?: number;
+    code?: string | number;
+    isRetryable?: boolean;
+  } = {
+    name: error instanceof Error ? error.name : "UnknownError",
+  };
+
+  if (typeof error !== "object" || error === null) return details;
+
+  if ("statusCode" in error && typeof error.statusCode === "number") {
+    details.statusCode = error.statusCode;
+  }
+  if (
+    "code" in error &&
+    (typeof error.code === "string" || typeof error.code === "number")
+  ) {
+    details.code = error.code;
+  }
+  if ("isRetryable" in error && typeof error.isRetryable === "boolean") {
+    details.isRetryable = error.isRetryable;
+  }
+
+  return details;
+}
+
+function getChatErrorMessage(error: unknown) {
+  const { statusCode } = getChatErrorDetails(error);
+
+  switch (statusCode) {
+    case 401:
+      return "Google rejected the API key. Check GOOGLE_GENERATIVE_AI_API_KEY.";
+    case 403:
+      return "Google denied access to Gemini. Check the API key's project and model access.";
+    case 404:
+      return "Google could not find the configured Gemini model.";
+    case 429:
+      return "The Gemini API quota or rate limit was exceeded.";
+    default:
+      return statusCode
+        ? `The Gemini request failed (HTTP ${statusCode}). Please try again.`
+        : "The assistant could not finish this response. Please try again.";
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const adminPassword = process.env.ADMIN_CHAT_PASSWORD;
@@ -165,7 +212,7 @@ export async function POST(req: Request) {
       tools: shopifyTools,
     });
     const result = streamText({
-      model: google("gemini-2.5-flash-lite"),
+      model: google("gemini-3.5-flash-lite"),
       system: systemPrompt,
       messages: modelMessages,
       tools: shopifyTools,
@@ -176,21 +223,15 @@ export async function POST(req: Request) {
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
       onError: (error) => {
-        console.error(
-          "Chat stream failed:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return "The assistant could not finish this response. Please try again.";
+        console.error("Chat stream failed:", getChatErrorDetails(error));
+        return getChatErrorMessage(error);
       },
       redactToolErrors: false,
     });
   } catch (error) {
-    console.error(
-      "Chat request failed:",
-      error instanceof Error ? error.name : "UnknownError",
-    );
+    console.error("Chat request failed:", getChatErrorDetails(error));
     return Response.json(
-      { error: "Unable to process the chat request. Please try again." },
+      { error: getChatErrorMessage(error) },
       { status: 500 },
     );
   }
