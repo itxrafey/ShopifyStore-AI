@@ -1,0 +1,197 @@
+import { google } from "@ai-sdk/google";
+import {
+  convertToModelMessages,
+  isStepCount,
+  streamText,
+  tool,
+  validateUIMessages,
+} from "ai";
+import { z } from "zod";
+import {
+  createProduct,
+  deleteProduct,
+  getStoreOverview,
+  listAllProducts,
+  listOrders,
+  listProducts,
+  updateInventory,
+  updateProduct,
+} from "@/lib/shopify-admin";
+
+const requestSchema = z.object({
+  messages: z.array(z.unknown()),
+});
+
+const shopifyTools = {
+  listProducts: tool({
+    description:
+      "Search Shopify products. Use this first to find exact product, variant, or inventory item IDs before editing, restocking, or deleting a product by name.",
+    inputSchema: z.object({
+      query: z.string().optional().describe("Optional Shopify product search filter."),
+    }),
+    execute: ({ query }) => listProducts(query),
+  }),
+  listAllProducts: tool({
+    description:
+      "Retrieve every product and all of its variants across the Shopify store. Use for explicit requests to list or audit the complete catalog; use listProducts for focused product lookup by name.",
+    inputSchema: z.object({
+      query: z.string().optional().describe("Optional Shopify product search filter."),
+    }),
+    execute: ({ query }) => listAllProducts(query),
+  }),
+  createProduct: tool({
+    description:
+      "Create a Shopify product, set the price of its default variant, optionally attach an image, and optionally publish it to the Online Store.",
+    inputSchema: z.object({
+      title: z.string().min(1),
+      descriptionHtml: z.string().optional(),
+      vendor: z.string().optional(),
+      productType: z.string().optional(),
+      price: z.union([z.string(), z.number()]),
+      status: z.enum(["ACTIVE", "ARCHIVED", "DRAFT"]).optional(),
+      imageUrl: z.string().url().optional(),
+      publishToOnlineStore: z.boolean().optional(),
+    }),
+    execute: (input) =>
+      createProduct({
+        ...input,
+        publishToOnlineStore:
+          input.status === "ACTIVE" || input.publishToOnlineStore,
+      }),
+  }),
+  updateProduct: tool({
+    description:
+      "Update Shopify product fields, optionally set a variant price, attach an image, or publish to the Online Store. Use listProducts first when the product was identified by name; pass the exact returned product and variant IDs.",
+    inputSchema: z.object({
+      id: z.string().min(1).describe("Exact Shopify product GID."),
+      title: z.string().optional(),
+      descriptionHtml: z.string().optional(),
+      vendor: z.string().optional(),
+      productType: z.string().optional(),
+      status: z.enum(["ACTIVE", "ARCHIVED", "DRAFT"]).optional(),
+      price: z.union([z.string(), z.number()]).optional(),
+      variantId: z.string().optional().describe("Exact Shopify variant GID."),
+      imageUrl: z.string().url().optional(),
+      publishToOnlineStore: z.boolean().optional(),
+    }),
+    execute: (input) => updateProduct(input),
+  }),
+  listOrders: tool({
+    description:
+      "List recent Shopify orders with order dates, financial and fulfillment statuses, line items, and totals for reviewing recent sales and revenue.",
+    inputSchema: z.object({
+      limit: z.number().int().min(1).max(250).optional(),
+    }),
+    execute: ({ limit }) => listOrders(limit),
+  }),
+  getStoreOverview: tool({
+    description:
+      "Get a store health overview containing the product count, all low-stock variants with inventory of 10 or fewer, and recent order summaries.",
+    inputSchema: z.object({}),
+    execute: () => getStoreOverview(),
+  }),
+  updateInventory: tool({
+    description:
+      "Set the exact available inventory quantity for a Shopify inventory item. Use listProducts first when identifying the item by product name.",
+    inputSchema: z.object({
+      inventoryItemId: z
+        .string()
+        .min(1)
+        .describe("Exact inventoryItem ID returned by listProducts."),
+      quantity: z.number().int(),
+    }),
+    execute: (input) => updateInventory(input),
+  }),
+  deleteProduct: tool({
+    description:
+      "Permanently delete a Shopify product. Use listProducts first when the product was identified by name, and pass its exact product GID.",
+    inputSchema: z.object({
+      id: z.string().min(1).describe("Exact Shopify product GID."),
+    }),
+    execute: ({ id }) => deleteProduct(id),
+  }),
+};
+
+const systemPrompt = `You are an expert Shopify Inventory Manager assistant.
+
+Never guess or invent Shopify IDs. If asked to edit, restock, or delete a product by name, first call listProducts to find the exact matching product and retrieve the exact Shopify product GID, Variant ID, or InventoryItem ID required for the requested action. If the match is ambiguous, ask the user to clarify before making changes.
+
+When the user asks for a complete product catalog, call listAllProducts. Use listProducts for focused name-based lookup before editing, restocking, or deleting. When creating a product with status ACTIVE, always set publishToOnlineStore to true so it appears on the live storefront immediately. Do not claim that a product is live unless the publishing tool call succeeds.
+
+Present product results as clear bullet points or clean Markdown tables. Include title, price, stock, status, storefront visibility, and the exact product ID whenever available. Use the first variant's price, total product inventory for Stock, and the product GID for ID. For order summaries, include order name, date, financial status, fulfillment status, and total with its currency.`;
+
+export async function POST(req: Request) {
+  try {
+    const adminPassword = process.env.ADMIN_CHAT_PASSWORD;
+    if (
+      !adminPassword ||
+      req.headers.get("x-admin-password") !== adminPassword
+    ) {
+      return Response.json(
+        { error: "Unauthorized: Invalid Admin Password" },
+        { status: 401 },
+      );
+    }
+
+    let requestBody: unknown;
+    try {
+      requestBody = await req.json();
+    } catch {
+      return Response.json(
+        { error: "Invalid JSON request body" },
+        { status: 400 },
+      );
+    }
+
+    const parsedBody = requestSchema.safeParse(requestBody);
+    if (!parsedBody.success) {
+      return Response.json(
+        { error: "Request body must include a messages array" },
+        { status: 400 },
+      );
+    }
+
+    let messages;
+    try {
+      messages = await validateUIMessages({
+        messages: parsedBody.data.messages,
+        tools: shopifyTools,
+      });
+    } catch {
+      return Response.json({ error: "Invalid chat messages" }, { status: 400 });
+    }
+
+    const modelMessages = await convertToModelMessages(messages, {
+      tools: shopifyTools,
+    });
+    const result = streamText({
+      model: google("gemini-2.5-flash-lite"),
+      system: systemPrompt,
+      messages: modelMessages,
+      tools: shopifyTools,
+      stopWhen: isStepCount(6),
+      abortSignal: req.signal,
+    });
+
+    return result.toUIMessageStreamResponse({
+      originalMessages: messages,
+      onError: (error) => {
+        console.error(
+          "Chat stream failed:",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        return "The assistant could not finish this response. Please try again.";
+      },
+      redactToolErrors: false,
+    });
+  } catch (error) {
+    console.error(
+      "Chat request failed:",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    return Response.json(
+      { error: "Unable to process the chat request. Please try again." },
+      { status: 500 },
+    );
+  }
+}

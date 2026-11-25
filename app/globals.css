@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f7f2;
+  --foreground: #24352a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid #6b9660;
+  outline-offset: 3px;
+}
+
+.custom-scrollbar {
+  scrollbar-color: rgb(126 148 128 / 45%) transparent;
+  scrollbar-width: thin;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background-color: rgb(126 148 128 / 45%);
+  background-clip: padding-box;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-message-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.ai-message-content :where(p, li, th, td) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-message-content :where(ul, ol) {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding-inline-start: 1.25rem;
+}
+
+.ai-message-content :where(pre) {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.ai-message-content pre code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.ai-message-content code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-message-content .markdown-table-wrapper {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
