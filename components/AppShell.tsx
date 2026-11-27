@@ -9,8 +9,6 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Package,
   Plus,
   ShoppingBag,
@@ -35,8 +33,6 @@ type AppShellProps = {
   counts: Record<DashboardTab, string>;
   connectionStatus: ShopifyConnectionStatus;
   storeDomain: string;
-  rightPanelOpen: boolean;
-  onToggleRightPanel: () => void;
   sessions: ChatSession[];
   activeSessionId: string | null;
   onNavigate: (tab: DashboardTab) => void;
@@ -131,18 +127,13 @@ function ConnectionStatus({
 function SidebarContent({
   activeTab,
   counts,
-  connectionStatus,
-  storeDomain,
   sessions,
   activeSessionId,
   onNavigate,
   onNewChat,
   onSelectSession,
   onDeleteSession,
-}: Omit<
-  AppShellProps,
-  "children" | "rightPanelOpen" | "onToggleRightPanel" | "onLock"
->) {
+}: Omit<AppShellProps, "children" | "connectionStatus" | "storeDomain" | "onLock">) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
       <div className="flex h-16 shrink-0 items-center gap-3 border-b border-slate-200/80 px-5">
@@ -159,80 +150,63 @@ function SidebarContent({
         </div>
       </div>
 
-      <div className="shrink-0 px-4 pt-4">
-        <button
-          type="button"
-          onClick={onNewChat}
-          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-        >
-          <Plus size={16} aria-hidden="true" />
-          New Chat
-        </button>
-      </div>
-
-      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
-      <div className="px-4 pt-5">
-        <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">
-          Store connection
-        </p>
-        <ConnectionStatus
-          status={connectionStatus}
-          storeDomain={storeDomain}
-        />
-      </div>
-
-      <nav aria-label="Dashboard navigation" className="mt-6 px-3">
-        <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">
-          Workspace
-        </p>
-        <div className="space-y-1">
-          {navigation.map(({ id, label, icon: Icon }) => {
-            const selected = activeTab === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onNavigate(id)}
-                aria-current={selected ? "page" : undefined}
-                className={`relative isolate flex h-11 w-full items-center gap-3 overflow-hidden rounded-xl px-3 text-left text-sm transition ${
-                  selected
-                    ? "font-medium text-slate-900"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
-              >
-                {selected ? (
-                  <motion.span
-                    layoutId="shopifystore-active-tab"
-                    className="absolute inset-0 -z-10 rounded-xl bg-emerald-50"
-                    transition={{
-                      type: "spring",
-                      stiffness: 420,
-                      damping: 34,
-                    }}
-                  />
-                ) : null}
-                <Icon
-                  size={17}
-                  className={selected ? "text-emerald-700" : "text-slate-400"}
-                />
-                <span className="min-w-0 flex-1 truncate">{label}</span>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] tabular-nums ${
+      <div className="shrink-0">
+        <nav aria-label="Dashboard navigation" className="mt-6 px-3">
+          <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">
+            Workspace
+          </p>
+          <div className="space-y-1">
+            {navigation.map(({ id, label, icon: Icon }) => {
+              const selected = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onNavigate(id)}
+                  aria-current={selected ? "page" : undefined}
+                  className={`relative isolate flex h-11 w-full items-center gap-3 overflow-hidden rounded-xl px-3 text-left text-sm transition ${
                     selected
-                      ? "bg-white text-emerald-800 ring-1 ring-emerald-100"
-                      : "bg-slate-100 text-slate-500"
+                      ? "font-medium text-slate-900"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
                 >
-                  {counts[id]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+                  {selected ? (
+                    <motion.span
+                      layoutId="shopifystore-active-tab"
+                      className="absolute inset-0 -z-10 rounded-xl bg-emerald-50"
+                      transition={{
+                        type: "spring",
+                        stiffness: 420,
+                        damping: 34,
+                      }}
+                    />
+                  ) : null}
+                  <Icon
+                    size={17}
+                    className={selected ? "text-emerald-700" : "text-slate-400"}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] tabular-nums ${
+                      selected
+                        ? "bg-white text-emerald-800 ring-1 ring-emerald-100"
+                        : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {counts[id]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
 
-      <section aria-label="Chat history" className="px-3 pt-5">
-        <div className="mb-2 flex items-center justify-between px-3">
+      <section
+        aria-label="Chat history"
+        className="flex min-h-0 flex-1 flex-col px-3 pt-5"
+      >
+        <div className="mb-2 flex shrink-0 items-center justify-between px-3">
           <h2 className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">
             Chat History
           </h2>
@@ -240,7 +214,7 @@ function SidebarContent({
             {sessions.length}
           </span>
         </div>
-        <div className="space-y-1 pb-3">
+        <div className="custom-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 pb-3">
           {sessions.length ? (
             sessions.map((session) => {
               const selected = session.id === activeSessionId;
@@ -292,8 +266,17 @@ function SidebarContent({
           )}
         </div>
       </section>
-      </div>
 
+      <div className="shrink-0 border-t border-slate-200/80 px-4 py-4">
+        <button
+          type="button"
+          onClick={onNewChat}
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+        >
+          <Plus size={16} aria-hidden="true" />
+          New Chat
+        </button>
+      </div>
     </div>
   );
 }
@@ -303,8 +286,6 @@ export default function AppShell({
   counts,
   connectionStatus,
   storeDomain,
-  rightPanelOpen,
-  onToggleRightPanel,
   sessions,
   activeSessionId,
   onNavigate,
@@ -365,8 +346,6 @@ export default function AppShell({
         <SidebarContent
           activeTab={activeTab}
           counts={counts}
-          connectionStatus={connectionStatus}
-          storeDomain={storeDomain}
           sessions={sessions}
           activeSessionId={activeSessionId}
           onNavigate={navigate}
@@ -399,23 +378,6 @@ export default function AppShell({
               storeDomain={storeDomain}
               compact
             />
-            {activeTab === "assistant" ? (
-              <button
-                type="button"
-                onClick={onToggleRightPanel}
-                aria-label={rightPanelOpen ? "Hide store panel" : "Show store panel"}
-                aria-expanded={rightPanelOpen}
-                aria-controls="assistant-insights-panel assistant-mobile-panel"
-                title={rightPanelOpen ? "Hide store panel" : "Show store panel"}
-                className="flex size-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
-              >
-                {rightPanelOpen ? (
-                  <PanelRightClose size={17} aria-hidden="true" />
-                ) : (
-                  <PanelRightOpen size={17} aria-hidden="true" />
-                )}
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={lock}
@@ -454,27 +416,15 @@ export default function AppShell({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {activeTab === "assistant" ? (
-              <button
-                type="button"
-                onClick={onToggleRightPanel}
-                aria-label={
-                  rightPanelOpen ? "Close insights panel" : "Open insights panel"
-                }
-                aria-expanded={rightPanelOpen}
-                aria-controls="assistant-insights-panel assistant-mobile-panel"
-                title={
-                  rightPanelOpen ? "Close insights panel" : "Open insights panel"
-                }
-                className="hidden size-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 lg:flex"
-              >
-                {rightPanelOpen ? (
-                  <PanelRightClose size={18} aria-hidden="true" />
-                ) : (
-                  <PanelRightOpen size={18} aria-hidden="true" />
-                )}
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={lock}
+              aria-label="Lock dashboard"
+              title="Lock dashboard"
+              className="flex size-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-600"
+            >
+              <LockKeyhole size={16} aria-hidden="true" />
+            </button>
             <ConnectionStatus
               status={connectionStatus}
               storeDomain={storeDomain}
@@ -520,8 +470,6 @@ export default function AppShell({
               <SidebarContent
                 activeTab={activeTab}
                 counts={counts}
-                connectionStatus={connectionStatus}
-                storeDomain={storeDomain}
                 sessions={sessions}
                 activeSessionId={activeSessionId}
                 onNavigate={navigate}

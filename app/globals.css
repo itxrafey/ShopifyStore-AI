@@ -109,3 +109,9 @@ select {
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
+
+.ai-message-content .markdown-table-wrapper td {
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
+}

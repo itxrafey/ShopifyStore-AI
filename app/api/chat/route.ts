@@ -1,7 +1,6 @@
 import { google } from "@ai-sdk/google";
 import {
   convertToModelMessages,
-  generateImage as generateImageWithAI,
   isStepCount,
   streamText,
   tool,
@@ -12,6 +11,7 @@ import {
   addProductImage,
   createProduct,
   deleteProduct,
+  generateAndUploadProductImage,
   getProductImageContext,
   getStoreOverview,
   listAllProducts,
@@ -19,76 +19,11 @@ import {
   listProducts,
   updateInventory,
   updateProduct,
-  uploadGeneratedProductImage,
 } from "@/lib/shopify-admin";
 
 const requestSchema = z.object({
   messages: z.array(z.unknown()),
 });
-
-function getGeneratedImagePrompt({
-  title,
-  description,
-  vendor,
-  productType,
-  price,
-}: {
-  title: string;
-  description?: string;
-  vendor?: string;
-  productType?: string;
-  price?: string | number;
-}) {
-  const cleanDescription = description
-    ?.replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 1200);
-  const details = [
-    `Product title: ${title}`,
-    cleanDescription ? `Description: ${cleanDescription}` : undefined,
-    vendor ? `Vendor: ${vendor}` : undefined,
-    productType ? `Product type: ${productType}` : undefined,
-    price !== undefined ? `Price context: ${price} (do not show text or price)` : undefined,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return `Create a square, photorealistic studio e-commerce product image using these product details:\n${details}\n\nShow one clear product on a clean, neutral background with professional lighting. Do not include text, logos, branding, watermarks, packaging copy, or price labels. Make an illustrative product image based on the provided details; do not imply it is a verified photograph of a specific real-world item.`;
-}
-
-async function generateAndStageProductImage({
-  title,
-  description,
-  vendor,
-  productType,
-  price,
-}: {
-  title: string;
-  description?: string;
-  vendor?: string;
-  productType?: string;
-  price?: string | number;
-}) {
-  const result = await generateImageWithAI({
-    model: google.image("gemini-nano-banana-2.1"),
-    prompt: getGeneratedImagePrompt({
-      title,
-      description,
-      vendor,
-      productType,
-      price,
-    }),
-    aspectRatio: "1:1",
-    maxRetries: 1,
-  });
-  const image = result.image;
-
-  return uploadGeneratedProductImage({
-    bytes: image.uint8Array,
-    mimeType: image.mediaType,
-  });
-}
 
 const shopifyTools = {
   listProducts: tool({
@@ -109,7 +44,7 @@ const shopifyTools = {
   }),
   createProduct: tool({
     description:
-      "Create a Shopify product and set the price of its default variant. If the user supplies a direct image URL, pass it as imageUrl. If the user explicitly asks for an image but gives no URL, set generateImage to true so a product image is generated from the product details. Do not generate images for products unless requested. Optionally publish it to the Online Store.",
+      "Create a Shopify product and set the price of its default variant. Every new product automatically receives an image unless imageUrl is supplied. Include a detailed visualPrompt describing the product's appearance. Never invent example image URLs. Optionally publish it to the Online Store.",
     inputSchema: z.object({
       title: z.string().min(1),
       descriptionHtml: z.string().optional(),
@@ -118,55 +53,23 @@ const shopifyTools = {
       price: z.union([z.string(), z.number()]),
       status: z.enum(["ACTIVE", "ARCHIVED", "DRAFT"]).optional(),
       imageUrl: z.string().url().optional(),
+      visualPrompt: z
+        .string()
+        .optional()
+        .describe("Detailed visual description matching the product details."),
       generateImage: z.boolean().optional(),
       publishToOnlineStore: z.boolean().optional(),
     }),
-    execute: async ({ imageUrl, generateImage, ...input }) => {
-      const product = await createProduct({
+    execute: (input) =>
+      createProduct({
         ...input,
         publishToOnlineStore:
           input.status === "ACTIVE" || input.publishToOnlineStore,
-      });
-
-      if (!imageUrl && !generateImage) return product;
-
-      try {
-        const sourceUrl =
-          imageUrl ??
-          (await generateAndStageProductImage({
-            title: input.title,
-            description: input.descriptionHtml,
-            vendor: input.vendor,
-            productType: input.productType,
-            price: input.price,
-          }));
-        const imageResult = await addProductImage({
-          id: product.id,
-          imageUrl: sourceUrl,
-          altText: input.title,
-        });
-
-        return { ...product, imageResult };
-      } catch (error) {
-        console.error(
-          "Product creation image failed:",
-          getChatErrorDetails(error),
-        );
-        return {
-          ...product,
-          imageResult: {
-            imageStatus: "FAILED",
-            imageUrl: null,
-            imageError:
-              "The product was created, but its image could not be generated or uploaded.",
-          },
-        };
-      }
-    },
+      }),
   }),
   updateProduct: tool({
     description:
-      "Update Shopify product fields, set a variant price, or publish to the Online Store. Use listProducts first when the product was identified by name; pass the exact returned product and variant IDs. Use addProductImage separately for images.",
+      "Update Shopify product fields, set a variant price, optionally add a direct imageUrl, or generate a new image by setting generateImage true. Include a detailed visualPrompt for generated images. Use listProducts first when the product was identified by name; pass exact returned IDs.",
     inputSchema: z.object({
       id: z.string().min(1).describe("Exact Shopify product GID."),
       title: z.string().optional(),
@@ -176,20 +79,33 @@ const shopifyTools = {
       status: z.enum(["ACTIVE", "ARCHIVED", "DRAFT"]).optional(),
       price: z.union([z.string(), z.number()]).optional(),
       variantId: z.string().optional().describe("Exact Shopify variant GID."),
+      imageUrl: z.string().url().optional(),
+      visualPrompt: z
+        .string()
+        .optional()
+        .describe("Detailed visual description for the generated product image."),
+      generateImage: z.boolean().optional(),
       publishToOnlineStore: z.boolean().optional(),
     }),
     execute: (input) => updateProduct(input),
   }),
   addProductImage: tool({
     description:
-      "Add an image to an existing Shopify product. If the user supplied a direct image URL, pass it as imageUrl. If they explicitly asked for an image but provided no URL, omit imageUrl to generate an illustrative product image from the existing product's title and description. Do not generate images for unrelated product edits. Return Shopify's media processing status.",
+      "Add or regenerate an existing product image. Use a user-supplied direct imageUrl if available; otherwise generate one from product details and visualPrompt. Never invent image URLs.",
     inputSchema: z.object({
       id: z.string().min(1).describe("Exact Shopify product GID."),
       imageUrl: z.string().url().optional().describe("Optional direct image URL."),
+      visualPrompt: z
+        .string()
+        .optional()
+        .describe("Detailed visual description for the product image."),
     }),
-    execute: async ({ id, imageUrl }) => {
+    execute: async ({ id, imageUrl, visualPrompt }) => {
       if (imageUrl) {
         const product = await getProductImageContext(id);
+        if (!product) {
+          throw new Error("Shopify could not find the product for the image.");
+        }
         return addProductImage({
           id,
           imageUrl,
@@ -198,19 +114,18 @@ const shopifyTools = {
       }
 
       const product = await getProductImageContext(id);
-      const generatedImageUrl = await generateAndStageProductImage({
-        title: product.title,
-        description: product.description,
-        vendor: product.vendor,
-        productType: product.productType,
-        price: product.variants.nodes[0]?.price,
-      });
+      if (!product) {
+        throw new Error("Shopify could not find the product for the image.");
+      }
 
-      return addProductImage({
+      return generateAndUploadProductImage(
         id,
-        imageUrl: generatedImageUrl,
-        altText: product.title,
-      });
+        product.title,
+        visualPrompt ??
+          [product.title, product.description, product.vendor, product.productType]
+            .filter(Boolean)
+            .join(", "),
+      );
     },
   }),
   listOrders: tool({
@@ -255,7 +170,7 @@ Never guess or invent Shopify IDs. If asked to edit, restock, or delete a produc
 
 When the user asks for a complete product catalog, call listAllProducts. Use listProducts for focused name-based lookup before editing, restocking, or deleting. When creating a product with status ACTIVE, always set publishToOnlineStore to true so it appears on the live storefront immediately. Do not claim that a product is live unless the publishing tool call succeeds.
 
-Only generate an image when the user explicitly requests one. For new products, pass generateImage: true to createProduct if an image was requested without a URL. For existing products, call addProductImage without imageUrl in that case; it will use the actual Shopify product details. Never invent an image URL. Generated images are illustrative, not verified photos of branded products. Only say an image is ready when Shopify returns imageStatus "READY"; for "UPLOADED" or "PROCESSING", explain it may not appear in the storefront until processing finishes. If createProduct returns an imageResult with imageStatus "FAILED", clearly say the product was created but the image generation/upload failed. If addProductImage fails during an update, clearly distinguish any successful field changes from the image failure.
+For every new product, include a detailed, visually specific visualPrompt matching its title and description; Shopify image generation runs automatically unless an imageUrl is supplied. Never invent fake/example.com image URLs. When a user asks to add or regenerate an image for an existing product, include a detailed visualPrompt and use updateProduct with generateImage: true (or the addProductImage tool). If a direct user-supplied imageUrl exists, use it instead of generating. If imageUpload.status is FAILED, clearly say the product was created or updated but the image could not be generated/uploaded. For addProductImage, the result field is imageStatus; only claim the image is ready when it is READY. For UPLOADED or PROCESSING, explain processing may still be underway.
 
 Present product results as clear bullet points or clean Markdown tables. Include title, price, stock, status, storefront visibility, and the exact product ID whenever available. Use the first variant's price, total product inventory for Stock, and the product GID for ID. For order summaries, include order name, date, financial status, fulfillment status, and total with its currency.`;
 

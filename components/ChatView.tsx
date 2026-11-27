@@ -10,14 +10,12 @@ import { useChat } from "@ai-sdk/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
-  ArrowUpRight,
   Bot,
   CheckCircle2,
   ChevronDown,
   CircleAlert,
   CornerDownLeft,
   LoaderCircle,
-  LockKeyhole,
   Package,
   Send,
   Sparkles,
@@ -36,13 +34,6 @@ import {
 
 const PASSWORD_STORAGE_KEY = "shopify-inventory-admin-password";
 
-export type ChatActivityEvent = {
-  id: string;
-  label: string;
-  time: string;
-  failed: boolean;
-};
-
 type ToolMutationEvent = {
   label: string;
   failed: boolean;
@@ -50,22 +41,16 @@ type ToolMutationEvent = {
 
 type ChatViewProps = {
   isActive: boolean;
-  rightPanelOpen: boolean;
   sessionId: string;
   initialMessages: UIMessage[];
   onMessagesUpdated: (messages: UIMessage[]) => void;
-  activityEvents: ChatActivityEvent[];
-  productCount: number | null;
-  lowStockCount: number | null;
   prefillPrompt: string;
   onPrefillConsumed: () => void;
   onError: (message: string) => void;
   onMutation: (event: ToolMutationEvent) => void;
   onRefreshStoreData: () => Promise<void>;
   onUnauthorized: () => void;
-  onLock: () => void;
   onUserMessageSent: () => void;
-  onViewInsights: () => void;
 };
 
 const starterActions = [
@@ -281,7 +266,7 @@ function MarkdownContent({ text }: { text: string }) {
           key={`table-${index}`}
           className="markdown-table-wrapper custom-scrollbar my-3 overflow-x-auto rounded-xl border border-slate-200"
         >
-          <table className="w-full min-w-[440px] border-collapse text-left text-xs sm:text-sm">
+          <table className="w-full min-w-[600px] border-collapse text-left text-xs sm:text-sm">
             <thead className="bg-slate-50">
               <tr>
                 {headers.map((header, cellIndex) => (
@@ -300,7 +285,7 @@ function MarkdownContent({ text }: { text: string }) {
                   {headers.map((_, cellIndex) => (
                     <td
                       key={cellIndex}
-                      className="px-3 py-2.5 text-slate-700 sm:px-4"
+                      className="whitespace-nowrap px-3 py-2.5 text-slate-700 sm:px-4"
                     >
                       <InlineMarkdown text={row[cellIndex] ?? ""} />
                     </td>
@@ -513,144 +498,18 @@ function ChatBubble({ message }: { message: UIMessage }) {
   );
 }
 
-function ActivityFeed({ events }: { events: ChatActivityEvent[] }) {
-  return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-slate-800">
-            Session activity
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            Recent store actions
-          </p>
-        </div>
-        <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-          <Activity size={15} />
-        </span>
-      </div>
-      {events.length ? (
-        <motion.ul layout className="mt-4 space-y-3">
-          <AnimatePresence initial={false}>
-            {events.slice(0, 6).map((event) => (
-              <motion.li
-                key={event.id}
-                layout
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 8 }}
-                className="flex items-start gap-2.5"
-              >
-                <span
-                  className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg ${
-                    event.failed
-                      ? "bg-rose-50 text-rose-600"
-                      : "bg-emerald-50 text-emerald-700"
-                  }`}
-                >
-                  {event.failed ? (
-                    <CircleAlert size={13} />
-                  ) : (
-                    <CheckCircle2 size={13} />
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="break-words text-[11px] font-medium leading-4 text-slate-700">
-                    {event.label}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-slate-400">
-                    {event.time}
-                  </p>
-                </div>
-              </motion.li>
-            ))}
-          </AnimatePresence>
-        </motion.ul>
-      ) : (
-        <p className="mt-4 rounded-xl bg-slate-50 px-3 py-4 text-center text-[11px] leading-5 text-slate-500">
-          Completed product and inventory actions will appear here.
-        </p>
-      )}
-    </section>
-  );
-}
-
-function StoreSnapshot({
-  productCount,
-  lowStockCount,
-  onViewInsights,
-}: {
-  productCount: number | null;
-  lowStockCount: number | null;
-  onViewInsights: () => void;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
-      <p className="text-[11px] font-semibold text-slate-700">Store snapshot</p>
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <div className="rounded-xl bg-slate-50 p-3">
-          <p className="text-[10px] text-slate-500">Products</p>
-          <p className="mt-1 text-lg font-semibold text-slate-800">
-            {productCount === null ? "—" : productCount.toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-xl bg-amber-50 p-3">
-          <p className="text-[10px] text-amber-800">Low stock</p>
-          <p className="mt-1 text-lg font-semibold text-amber-900">
-            {lowStockCount === null ? "—" : lowStockCount.toLocaleString()}
-          </p>
-        </div>
-      </div>
-      <button
-        type="button"
-        onClick={onViewInsights}
-        className="mt-3 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-800 hover:text-emerald-950"
-      >
-        View store insights <ArrowUpRight size={13} />
-      </button>
-    </section>
-  );
-}
-
-function StoreLockCard({ onLock }: { onLock: () => void }) {
-  return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs">
-      <p className="text-[11px] font-medium text-slate-700">
-        Store actions are protected
-      </p>
-      <p className="mt-1 text-[10px] leading-4 text-slate-500">
-        Lock the dashboard whenever you step away.
-      </p>
-      <button
-        type="button"
-        onClick={onLock}
-        className="mt-3 flex h-10 w-full items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-medium text-slate-700 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-600"
-      >
-        <LockKeyhole size={15} aria-hidden="true" />
-        Lock Dashboard
-      </button>
-    </section>
-  );
-}
-
 export default function ChatView({
   isActive,
-  rightPanelOpen,
   sessionId,
   initialMessages,
   onMessagesUpdated,
-  activityEvents,
-  productCount,
-  lowStockCount,
   prefillPrompt,
   onPrefillConsumed,
   onError,
   onMutation,
   onRefreshStoreData,
   onUnauthorized,
-  onLock,
   onUserMessageSent,
-  onViewInsights,
 }: ChatViewProps) {
   const [draft, setDraft] = useState("");
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -795,15 +654,7 @@ export default function ChatView({
 
   return (
     <div
-      className={
-        isActive
-          ? `grid h-full min-h-0 transition-[grid-template-columns] duration-300 ease-in-out ${
-              rightPanelOpen
-                ? "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_280px]"
-                : "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_0px]"
-            }`
-          : "hidden"
-      }
+      className={isActive ? "grid h-full min-h-0 grid-cols-1" : "hidden"}
     >
       <section className="flex min-h-0 min-w-0 flex-col">
         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-7 sm:py-6">
@@ -900,26 +751,6 @@ export default function ChatView({
               </div>
             )}
 
-            <AnimatePresence initial={false}>
-              {rightPanelOpen ? (
-                <motion.div
-                  id="assistant-mobile-panel"
-                  initial={{ opacity: 0, height: 0, y: 8 }}
-                  animate={{ opacity: 1, height: "auto", y: 0 }}
-                  exit={{ opacity: 0, height: 0, y: 8 }}
-                  transition={{ duration: 0.18 }}
-                  className="mt-6 space-y-4 overflow-hidden xl:hidden"
-                >
-                  <ActivityFeed events={activityEvents} />
-                  <StoreSnapshot
-                    productCount={productCount}
-                    lowStockCount={lowStockCount}
-                    onViewInsights={onViewInsights}
-                  />
-                  <StoreLockCard onLock={onLock} />
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
           </div>
         </div>
 
@@ -992,26 +823,6 @@ export default function ChatView({
         </div>
       </section>
 
-      <aside
-        id="assistant-insights-panel"
-        aria-hidden={!rightPanelOpen}
-        inert={!rightPanelOpen}
-        className={`custom-scrollbar hidden min-h-0 min-w-0 flex-col gap-4 bg-slate-50/70 transition-opacity duration-200 xl:flex ${
-          rightPanelOpen
-            ? "overflow-y-auto border-l border-slate-200/80 p-5 opacity-100"
-            : "overflow-hidden border-l-0 p-0 opacity-0"
-        }`}
-      >
-        <ActivityFeed events={activityEvents} />
-        <StoreSnapshot
-          productCount={productCount}
-          lowStockCount={lowStockCount}
-          onViewInsights={onViewInsights}
-        />
-        <div className="mt-auto">
-          <StoreLockCard onLock={onLock} />
-        </div>
-      </aside>
     </div>
   );
 }

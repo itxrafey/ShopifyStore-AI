@@ -211,7 +211,11 @@ function ProductCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const firstVariant = product.variants.nodes[0];
   const isActive = product.status === "ACTIVE";
-  const stock = stockStyle(product.totalInventory);
+  const availableStock = product.variants.nodes.reduce(
+    (total, variant) => total + (variant.inventoryQuantity ?? 0),
+    0,
+  );
+  const stock = stockStyle(availableStock);
 
   return (
     <motion.article
@@ -265,7 +269,7 @@ function ProductCard({
             <span
               className={`rounded-full border px-2.5 py-1 text-[10px] font-medium ${stock.className}`}
             >
-              {formatNumber(product.totalInventory)} {stock.label}
+              {formatNumber(availableStock)} {stock.label}
             </span>
           </div>
         </div>

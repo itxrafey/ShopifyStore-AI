@@ -5,7 +5,7 @@ import AppShell, {
   type DashboardTab,
   type ShopifyConnectionStatus,
 } from "@/components/AppShell";
-import ChatView, { type ChatActivityEvent } from "@/components/ChatView";
+import ChatView from "@/components/ChatView";
 import {
   CatalogView,
   InventoryView,
@@ -91,7 +91,6 @@ export default function Home() {
   const [prefillPrompt, setPrefillPrompt] = useState("");
   const [assistantMessageCount, setAssistantMessageCount] = useState(0);
   const [activeTab, setActiveTab] = useState<DashboardTab>("assistant");
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [products, setProducts] = useState<ShopifyProduct[]>([]);
   const [overview, setOverview] = useState<ShopifyStoreOverview | null>(null);
   const [orders, setOrders] = useState<ShopifyOrder[]>([]);
@@ -102,7 +101,6 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastNotification | null>(null);
-  const [activityEvents, setActivityEvents] = useState<ChatActivityEvent[]>([]);
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const toastTimerRef = useRef<number | null>(null);
@@ -415,25 +413,8 @@ export default function Home() {
     showToast,
   ]);
 
-  const recordActivity = useCallback((label: string, failed = false) => {
-    const event: ChatActivityEvent = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      label,
-      time: new Intl.DateTimeFormat(undefined, {
-        hour: "numeric",
-        minute: "2-digit",
-      }).format(new Date()),
-      failed,
-    };
-    setActivityEvents((current) => [event, ...current].slice(0, 20));
-  }, []);
-
   const consumePrefillPrompt = useCallback(() => {
     setPrefillPrompt("");
-  }, []);
-
-  const toggleRightPanel = useCallback(() => {
-    setRightPanelOpen((open) => !open);
   }, []);
 
   const recordUserMessage = useCallback(() => {
@@ -442,10 +423,9 @@ export default function Home() {
 
   const handleChatMutation = useCallback(
     ({ label, failed }: { label: string; failed: boolean }) => {
-      recordActivity(label, failed);
       showToast(failed ? "error" : "success", label);
     },
-    [recordActivity, showToast],
+    [showToast],
   );
 
   useEffect(() => {
@@ -463,13 +443,11 @@ export default function Home() {
     setLockError("");
     setPasswordInput("");
     dismissToast();
-    recordActivity("Admin session unlocked");
   };
 
   const lock = () => {
     resetAuthorization();
     setAssistantMessageCount(0);
-    recordActivity("Admin session locked");
   };
 
   const runRefresh = async (
@@ -500,9 +478,6 @@ export default function Home() {
           item.id === product.id ? result.product : item,
         ),
       );
-      recordActivity(
-        `${result.product.title} set to ${statusLabel(result.product.status)}`,
-      );
       showToast(
         "success",
         `${result.product.title} set to ${statusLabel(result.product.status)}.`,
@@ -510,7 +485,6 @@ export default function Home() {
       await refreshAllData();
     } catch (error) {
       showToast("error", errorMessage(error));
-      recordActivity(`Status update failed for ${product.title}`, true);
     } finally {
       setPendingAction(null);
     }
@@ -525,12 +499,10 @@ export default function Home() {
         body: JSON.stringify({ action: "deleteProduct", id: product.id }),
       });
       setProducts((current) => current.filter((item) => item.id !== product.id));
-      recordActivity(`Deleted ${product.title}`);
       showToast("success", `${product.title} deleted.`);
       await refreshAllData();
     } catch (error) {
       showToast("error", errorMessage(error));
-      recordActivity(`Delete failed for ${product.title}`, true);
     } finally {
       setPendingAction(null);
     }
@@ -549,31 +521,60 @@ export default function Home() {
 
     setPendingAction(variant.id);
     try {
-      await requestJson("/api/shopify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "updateInventory",
-          inventoryItemId: variant.inventoryItem.id,
-          quantity,
-        }),
-      });
+      const result = await requestJson<{ quantityChange: number }>(
+        "/api/shopify",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "updateInventory",
+            inventoryItemId: variant.inventoryItem.id,
+            quantity,
+          }),
+        },
+      );
+      setProducts((current) =>
+        current.map((item) =>
+          item.id === product.id
+            ? {
+                ...item,
+                totalInventory: item.totalInventory + result.quantityChange,
+                variants: {
+                  ...item.variants,
+                  nodes: item.variants.nodes.map((itemVariant) =>
+                    itemVariant.id === variant.id
+                      ? {
+                          ...itemVariant,
+                          inventoryQuantity:
+                            itemVariant.inventoryQuantity +
+                            result.quantityChange,
+                        }
+                      : itemVariant,
+                  ),
+                },
+              }
+            : item,
+        ),
+      );
       setQuantityDrafts((current) => {
         const updated = { ...current };
         delete updated[variant.id];
         return updated;
       });
-      recordActivity(
-        `Set ${product.title} · ${variant.title} inventory to ${quantity}`,
-      );
       showToast(
         "success",
         `${product.title} · ${variant.title} stock set to ${quantity}.`,
       );
-      await refreshAllData();
+      try {
+        await refreshOverview();
+      } catch (error) {
+        showToast(
+          "error",
+          `Stock was saved, but the store overview could not refresh: ${errorMessage(error)}`,
+        );
+      }
     } catch (error) {
       showToast("error", errorMessage(error));
-      recordActivity(`Inventory update failed for ${product.title}`, true);
     } finally {
       setPendingAction(null);
     }
@@ -612,8 +613,6 @@ export default function Home() {
         counts={navCounts}
         connectionStatus={shopifyConnectionStatus}
         storeDomain={shopDomain}
-        rightPanelOpen={rightPanelOpen}
-        onToggleRightPanel={toggleRightPanel}
         sessions={chatSessions}
         activeSessionId={chatSession?.id ?? null}
         onNavigate={setActiveTab}
@@ -629,19 +628,13 @@ export default function Home() {
             sessionId={chatSession.id}
             initialMessages={chatSession.messages}
             onMessagesUpdated={handleChatMessagesUpdated}
-            rightPanelOpen={rightPanelOpen}
-            activityEvents={activityEvents}
-            productCount={overview?.productCount ?? null}
-            lowStockCount={overview?.lowStockVariants.length ?? null}
             prefillPrompt={prefillPrompt}
             onPrefillConsumed={consumePrefillPrompt}
             onError={(message) => showToast("error", message)}
             onMutation={handleChatMutation}
             onRefreshStoreData={refreshAllData}
             onUnauthorized={resetAuthorization}
-            onLock={lock}
             onUserMessageSent={recordUserMessage}
-            onViewInsights={() => setActiveTab("orders")}
           />
         ) : activeTab === "assistant" ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-slate-500">

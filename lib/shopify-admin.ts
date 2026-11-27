@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 
 type ShopifyProductStatus = "ACTIVE" | "ARCHIVED" | "DRAFT";
 
@@ -27,6 +28,14 @@ export type ShopifyProduct = {
   totalInventory: number;
   variants: {
     nodes: ProductVariant[];
+  };
+};
+
+type ShopifyProductMutationResult = ShopifyProduct & {
+  imageUpload?: {
+    status: string;
+    imageUrl: string | null;
+    error?: string;
   };
 };
 
@@ -345,24 +354,30 @@ function getImageMedia(imageUrl?: string, altText?: string) {
   return [{ originalSource: imageUrl, mediaContentType: "IMAGE", alt: altText }];
 }
 
-export async function uploadGeneratedProductImage({
-  bytes,
-  mimeType,
-}: {
-  bytes: Uint8Array;
-  mimeType: string;
-}): Promise<string> {
-  const extensionByMimeType: Record<string, string> = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-  };
-  const extension = extensionByMimeType[mimeType];
-  if (!extension) {
-    throw new Error(`Unsupported generated image type: ${mimeType}`);
+function getProductVisualDescription(
+  title: string,
+  descriptionHtml?: string,
+  vendor?: string,
+  productType?: string,
+) {
+  const description = descriptionHtml
+    ?.replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
+
+  return [title, description, vendor, productType].filter(Boolean).join(", ");
+}
+
+export async function uploadImageBufferToShopify(
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<string> {
+  if (buffer.length === 0 || !filename.trim() || !mimeType.trim()) {
+    throw new Error("A non-empty image buffer, filename, and MIME type are required.");
   }
 
-  const filename = `generated-product-${Date.now()}.${extension}`;
   const data = await shopifyAdminFetch<{
     stagedUploadsCreate: {
       stagedTargets: Array<{
@@ -393,9 +408,9 @@ export async function uploadGeneratedProductImage({
         {
           filename,
           mimeType,
-          fileSize: String(bytes.byteLength),
+          fileSize: buffer.length.toString(),
           httpMethod: "POST",
-          resource: "PRODUCT_IMAGE",
+          resource: "IMAGE",
         },
       ],
     },
@@ -405,6 +420,9 @@ export async function uploadGeneratedProductImage({
   if (!target) {
     throw new Error("Shopify did not return a staged upload target.");
   }
+  if (!target.resourceUrl) {
+    throw new Error("Shopify did not return a staged resource URL.");
+  }
 
   const formData = new FormData();
   for (const parameter of target.parameters) {
@@ -412,7 +430,7 @@ export async function uploadGeneratedProductImage({
   }
   formData.append(
     "file",
-    new Blob([Buffer.from(bytes)], { type: mimeType }),
+    new Blob([new Uint8Array(buffer)], { type: mimeType }),
     filename,
   );
 
@@ -824,6 +842,9 @@ export async function createProduct({
   vendor,
   productType,
   price,
+  imageUrl,
+  visualPrompt,
+  generateImage,
   publishToOnlineStore,
   status,
 }: {
@@ -832,9 +853,12 @@ export async function createProduct({
   vendor?: string;
   productType?: string;
   price: string | number;
+  imageUrl?: string;
+  visualPrompt?: string;
+  generateImage?: boolean;
   publishToOnlineStore?: boolean;
   status?: ShopifyProductStatus;
-}): Promise<ShopifyProduct> {
+}): Promise<ShopifyProductMutationResult> {
   if (publishToOnlineStore && status !== undefined && status !== "ACTIVE") {
     throw new Error(
       "A product must have ACTIVE status to be published to the Online Store.",
@@ -910,6 +934,51 @@ export async function createProduct({
     await publishProductToOnlineStore(pricedProduct.id);
   }
 
+  if (imageUrl !== undefined || generateImage !== false) {
+    try {
+      const imageResult =
+        imageUrl !== undefined
+          ? await addProductImage({
+              id: pricedProduct.id,
+              imageUrl,
+              altText: title,
+            })
+          : await generateAndUploadProductImage(
+              pricedProduct.id,
+              title,
+              visualPrompt ??
+                getProductVisualDescription(
+                  title,
+                  descriptionHtml,
+                  vendor,
+                  productType,
+                ),
+            );
+      return {
+        ...pricedProduct,
+        imageUpload: {
+          status: imageResult.imageStatus,
+          imageUrl: imageResult.imageUrl,
+        },
+      };
+    } catch (error) {
+      console.error("Product image generation or upload failed:", {
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+      return {
+        ...pricedProduct,
+        imageUpload: {
+          status: "FAILED",
+          imageUrl: null,
+          error:
+            error instanceof Error
+              ? error.message
+              : "The product image could not be generated or uploaded.",
+        },
+      };
+    }
+  }
+
   return pricedProduct;
 }
 
@@ -922,6 +991,9 @@ export async function updateProduct({
   status,
   price,
   variantId,
+  imageUrl,
+  visualPrompt,
+  generateImage,
   publishToOnlineStore,
 }: {
   id: string;
@@ -932,8 +1004,11 @@ export async function updateProduct({
   status?: ShopifyProductStatus;
   price?: string | number;
   variantId?: string;
+  imageUrl?: string;
+  visualPrompt?: string;
+  generateImage?: boolean;
   publishToOnlineStore?: boolean;
-}): Promise<ShopifyProduct> {
+}): Promise<ShopifyProductMutationResult> {
   if ((price === undefined) !== (variantId === undefined)) {
     throw new Error("Provide both price and variantId to update a variant price.");
   }
@@ -958,14 +1033,17 @@ export async function updateProduct({
   if (
     !hasProductFields &&
     price === undefined &&
+    imageUrl === undefined &&
+    !generateImage &&
+    visualPrompt === undefined &&
     !publishToOnlineStore
   ) {
     throw new Error(
-      "Provide at least one product field, a variant price, or publication.",
+      "Provide at least one product field, a variant price, an image, or publication.",
     );
   }
 
-  let product: ShopifyProduct | null = null;
+  let product: ShopifyProductMutationResult | null = null;
 
   if (hasProductFields) {
     const data = await shopifyAdminFetch<{
@@ -1020,6 +1098,62 @@ export async function updateProduct({
 
   if (publishToOnlineStore) {
     await publishProductToOnlineStore(id);
+  }
+
+  if (
+    imageUrl !== undefined ||
+    generateImage === true ||
+    visualPrompt !== undefined
+  ) {
+    if (!product) {
+      product = await getProductImageContext(id);
+      if (!product) {
+        throw new Error("Shopify could not find the product to update.");
+      }
+    }
+
+    try {
+      const imageResult =
+        imageUrl !== undefined
+          ? await addProductImage({
+              id,
+              imageUrl,
+              altText: product.title,
+            })
+          : await generateAndUploadProductImage(
+              id,
+              title ?? product.title,
+              visualPrompt ??
+                getProductVisualDescription(
+                  title ?? product.title,
+                  descriptionHtml ?? product.description,
+                  vendor ?? product.vendor,
+                  productType ?? product.productType,
+                ),
+            );
+      product = {
+        ...product,
+        imageUpload: {
+          status: imageResult.imageStatus,
+          imageUrl: imageResult.imageUrl,
+        },
+      };
+    } catch (error) {
+      console.error("Product image generation or upload failed:", {
+        name: error instanceof Error ? error.name : "UnknownError",
+      });
+      product = {
+        ...product,
+        imageUpload: {
+          status: "FAILED",
+          imageUrl: null,
+          error:
+            error instanceof Error
+              ? error.message
+              : "The product image could not be generated or uploaded.",
+        },
+      };
+    }
   }
 
   if (!product) {
@@ -1106,48 +1240,90 @@ export async function addProductImage({
   };
 }
 
+export async function generateAndUploadProductImage(
+  productId: string,
+  productTitle: string,
+  visualPrompt?: string,
+): Promise<{
+  productId: string;
+  productTitle: string;
+  imageStatus: string;
+  imageUrl: string | null;
+}> {
+  const apiKey = process.env.POLLINATIONS_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("Missing required environment variable: POLLINATIONS_API_KEY");
+  }
+
+  const prompt = `professional studio product photography of ${visualPrompt || productTitle}, clean minimal background, sharp focus, commercial lighting`;
+  const imageUrl = new URL(
+    `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}`,
+  );
+  imageUrl.searchParams.set("width", "800");
+  imageUrl.searchParams.set("height", "800");
+  imageUrl.searchParams.set("nologo", "true");
+  imageUrl.searchParams.set("enhance", "true");
+
+  const response = await fetch(imageUrl, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "image/jpeg",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Pollinations image generation failed with HTTP ${response.status}.`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0];
+  if (contentType !== "image/jpeg") {
+    throw new Error(
+      `Pollinations returned ${contentType ?? "an unknown content type"} instead of a JPEG image.`,
+    );
+  }
+
+  const imageBytes = await response.arrayBuffer();
+  if (imageBytes.byteLength === 0 || imageBytes.byteLength > 20 * 1024 * 1024) {
+    throw new Error("Pollinations returned an empty or oversized image.");
+  }
+
+  const resourceUrl = await uploadImageBufferToShopify(
+    Buffer.from(imageBytes),
+    `${Date.now()}-product.jpg`,
+    "image/jpeg",
+  );
+
+  return addProductImage({
+    id: productId,
+    imageUrl: resourceUrl,
+    altText: productTitle,
+  });
+}
+
 export async function getProductImageContext(id: string): Promise<{
   id: string;
   title: string;
   description: string;
+  featuredImage: ShopifyProduct["featuredImage"];
+  status: ShopifyProductStatus;
   vendor: string;
   productType: string;
-  variants: {
-    nodes: Array<{ price: string }>;
-  };
-}> {
+  totalInventory: number;
+  variants: ShopifyProduct["variants"];
+} | null> {
   const data = await shopifyAdminFetch<{
-    product: {
-      id: string;
-      title: string;
-      description: string;
-      vendor: string;
-      productType: string;
-      variants: {
-        nodes: Array<{ price: string }>;
-      };
-    } | null;
+    product: ShopifyProduct | null;
   }>(
     `query ProductImageContext($id: ID!) {
       product(id: $id) {
-        id
-        title
-        description
-        vendor
-        productType
-        variants(first: 1) {
-          nodes {
-            price
-          }
-        }
+        ${PRODUCT_FIELDS}
       }
     }`,
     { id },
   );
-
-  if (!data.product) {
-    throw new Error("Shopify could not find the product for image generation.");
-  }
 
   return data.product;
 }
@@ -1159,6 +1335,7 @@ export async function updateInventory({
   inventoryItemId: string;
   quantity: number;
 }): Promise<{
+  quantityChange: number;
   inventoryAdjustmentGroup: {
     createdAt: string;
     reason: string;
@@ -1181,6 +1358,47 @@ export async function updateInventory({
     throw new Error("Shopify store has no location for inventory updates.");
   }
 
+  const inventoryData = await shopifyAdminFetch<{
+    inventoryItem: {
+      inventoryLevel: {
+        quantities: Array<{ name: string; quantity: number }>;
+      } | null;
+    } | null;
+  }>(
+    `query GetCurrentInventoryQuantity($inventoryItemId: ID!, $locationId: ID!) {
+      inventoryItem(id: $inventoryItemId) {
+        inventoryLevel(locationId: $locationId) {
+          quantities(names: ["available"]) {
+            name
+            quantity
+          }
+        }
+      }
+    }`,
+    { inventoryItemId, locationId: location.id },
+  );
+
+  const inventoryItem = inventoryData.inventoryItem;
+  if (!inventoryItem) {
+    throw new Error("Shopify inventory item was not found.");
+  }
+
+  const inventoryLevel = inventoryItem.inventoryLevel;
+  if (!inventoryLevel) {
+    throw new Error(
+      "Inventory item is not active at the primary Shopify location.",
+    );
+  }
+
+  const changeFromQuantity = inventoryLevel.quantities.find(
+    ({ name }) => name === "available",
+  )?.quantity;
+  if (changeFromQuantity === undefined) {
+    throw new Error(
+      "Could not read the current available inventory quantity at the primary Shopify location.",
+    );
+  }
+
   const data = await shopifyAdminFetch<{
     inventorySetQuantities: {
       inventoryAdjustmentGroup: {
@@ -1189,8 +1407,11 @@ export async function updateInventory({
       } | null;
     };
   }>(
-    `mutation SetInventoryQuantity($input: InventorySetQuantitiesInput!) {
-      inventorySetQuantities(input: $input) {
+    `mutation SetInventoryQuantity(
+      $input: InventorySetQuantitiesInput!
+      $idempotencyKey: String!
+    ) {
+      inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
         inventoryAdjustmentGroup {
           createdAt
           reason
@@ -1205,13 +1426,23 @@ export async function updateInventory({
       input: {
         name: "available",
         reason: "correction",
-        ignoreCompareQuantity: true,
-        quantities: [{ inventoryItemId, locationId: location.id, quantity }],
+        quantities: [
+          {
+            inventoryItemId,
+            locationId: location.id,
+            quantity,
+            changeFromQuantity,
+          },
+        ],
       },
+      idempotencyKey: randomUUID(),
     },
   );
 
-  return data.inventorySetQuantities;
+  return {
+    ...data.inventorySetQuantities,
+    quantityChange: quantity - changeFromQuantity,
+  };
 }
 
 export async function deleteProduct(id: string): Promise<string> {
